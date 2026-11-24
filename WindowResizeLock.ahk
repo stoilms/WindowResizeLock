@@ -49,11 +49,11 @@ if settings.remember
     ApplyRemembered()
 
 A_TrayMenu.Delete()
-A_TrayMenu.Add("Open Window Lock", (*) => ShowUi())
+A_TrayMenu.Add("Open Window Resize Lock", (*) => ShowUi())
 A_TrayMenu.Add("Toggle active window", (*) => Toggle(WinGetID("A")))
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-A_TrayMenu.Default := "Open Window Lock"
+A_TrayMenu.Default := "Open Window Resize Lock"
 A_TrayMenu.ClickCount := 1
 
 OnExit(OnScriptExit)
@@ -63,9 +63,9 @@ if settings.remember
 
 if settings.startHidden {
     if settings.hotkeyEnabled
-        TrayTip(HotkeyLabel(settings.hotkey) " toggles the active window.`nOpen Window Lock from the tray for settings.", "Window Lock")
+        TrayTip(HotkeyLabel(settings.hotkey) " toggles the active window.`nOpen Window Resize Lock from the tray for settings.", "Window Resize Lock")
     else
-        TrayTip("Keyboard shortcut is off.`nOpen Window Lock from the tray for settings.", "Window Lock")
+        TrayTip("Keyboard shortcut is off.`nOpen Window Reize Lock from the tray for settings.", "Window Resize Lock")
 } else
     ShowUi()
 
@@ -274,9 +274,9 @@ ApplyHotkey(newHotkey) {
 UpdateIconTip() {
     global settings
     if settings.hotkeyEnabled
-        A_IconTip := "Window Lock — " HotkeyLabel(settings.hotkey) " toggles resize"
+        A_IconTip := "Window Resize Lock — " HotkeyLabel(settings.hotkey) " toggles resize"
     else
-        A_IconTip := "Window Lock — shortcut off"
+        A_IconTip := "Window Resize Lock — shortcut off"
 }
 
 HotkeyLabel(hk) {
@@ -342,7 +342,7 @@ HotkeyCapture_OnKeyDown(ih, vk, sc) {
         Tip("Hotkey set to " HotkeyLabel(settings.hotkey))
     } catch as err {
         ui.hotkeyText.Value := HotkeyLabel(settings.hotkey)
-        MsgBox("Could not set that hotkey:`n" err.Message, "Window Lock", "IconX")
+        MsgBox("Could not set that hotkey:`n" err.Message, "Window Resize Lock", "IconX")
     }
 }
 
@@ -521,7 +521,7 @@ ShowUi(*) {
 
 BuildUi() {
     global ui, settings
-    g := Gui("-Resize", "Window Lock")
+    g := Gui("-Resize", "Window Resize Lock")
     g.OnEvent("Close", (*) => g.Hide())
     g.OnEvent("Escape", (*) => g.Hide())
     g.SetFont("s10", "Segoe UI")

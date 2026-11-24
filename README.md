@@ -4,9 +4,9 @@ Stops selected windows from being resized. Edge-dragging and the maximize button
 
 Requires [AutoHotkey v2](https://www.autohotkey.com/). Run `WindowResizeLock.ahk`.
 
-![Window Lock](docs/screenshot.png)
+![Window Resize Lock](docs/screenshot.png)
 
-## What you can do
+## Features
 
 - **Lock or unlock windows.** Check a window in the list, or press the shortcut (Win+Shift+L by default) to toggle the active window. A check applies to that window’s program and title, so other windows from the same program stay as they are.
 - **Change the shortcut.** Click **Change…** and press the keys you want.
@@ -17,7 +17,11 @@ Requires [AutoHotkey v2](https://www.autohotkey.com/). Run `WindowResizeLock.ahk
 
 Settings are saved next to the script in `WindowResizeLock.ini`.
 
-## Limits
+## Use Cases
+
+I like to cordon off sections of my screen real estate using tools like [DesktopCoral](https://www.donationcoder.com/programs/mouser/other-windows-apps/desktopcoral/). Dragging normal app windows over into the DesktopCoral area usually causes the app window to want to resize. This AutoHotkey script prevents that for windows you select, resulting in much easier window management.
+
+## Limitations
 
 The script removes the sizing border (`WS_THICKFRAME`) and the maximize box (`WS_MAXIMIZEBOX`), then puts them back if the app resets them. Some apps draw their own frame and ignore this, including many Electron, game, and WinUI windows.
 
