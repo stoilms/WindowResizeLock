@@ -37,7 +37,7 @@ DEFAULT_HOTKEY := "#+l"
 
 ; hwnd => style the window had before we locked it
 locked := Map()
-; lowercased exe path => title last seen (matched by exe, so titles can change)
+; "exe|title" => title. Same process, different window titles stay separate.
 remembered := Map()
 settings := { hotkey: DEFAULT_HOTKEY, remember: false, startHidden: false }
 ui := { gui: 0, lv: 0, hotkeyText: 0, rememberCb: 0, startHiddenCb: 0, capturing: false, captureIh: 0 }
@@ -115,15 +115,17 @@ LoadSettings() {
             parts := StrSplit(decoded, "|", , 2)
             exe := Trim(parts[1])
             title := parts.Length > 1 ? parts[2] : ""
-            if (exe != "")
-                remembered[StrLower(exe)] := title
+            if (exe != "" && title != "")
+                remembered[WindowIdentity(exe, title)] := title
         }
     }
     for index, exe in exes {
         if (exe = "")
             continue
         title := titles.Has(index) ? titles[index] : ""
-        remembered[StrLower(exe)] := title
+        if (title = "")
+            continue
+        remembered[WindowIdentity(exe, title)] := title
     }
 }
 
@@ -149,9 +151,12 @@ SaveSettings() {
         . "`r`n[Remembered]`r`n"
     if settings.remember {
         i := 0
-        for exe, title in remembered {
+        for key, title in remembered {
+            parts := StrSplit(key, "|", , 2)
+            if (parts.Length < 2 || parts[1] = "" || title = "")
+                continue
             i++
-            content .= "Exe" i "=" exe "`r`n"
+            content .= "Exe" i "=" parts[1] "`r`n"
             content .= "Title" i "=" StrReplace(StrReplace(title, "`r", " "), "`n", " ") "`r`n"
         }
     }
@@ -177,19 +182,23 @@ ProcessName(hwnd) {
         return ""
 }
 
-; Prefer the full path. Fall back to the process name, which is what the list shows.
+; One specific window: its program plus its title. Other windows of that program are left alone.
+WindowIdentity(exe, title) => StrLower(exe) "|" StrLower(title)
+
 RememberKey(hwnd) {
-    path := ExePath(hwnd)
-    if (path != "")
-        return StrLower(path)
-    return StrLower(ProcessName(hwnd))
+    exe := ExePath(hwnd)
+    if (exe = "")
+        exe := ProcessName(hwnd)
+    title := TitleOf(hwnd)
+    if (exe = "" || title = "")
+        return ""
+    return WindowIdentity(exe, title)
 }
 
 IsRemembered(hwnd) {
     global remembered
-    path := StrLower(ExePath(hwnd))
-    name := StrLower(ProcessName(hwnd))
-    return (path != "" && remembered.Has(path)) || (name != "" && remembered.Has(name))
+    key := RememberKey(hwnd)
+    return key != "" && remembered.Has(key)
 }
 
 RememberAdd(hwnd) {
@@ -211,12 +220,9 @@ RememberRemove(hwnd) {
         settings.remember := (ui.rememberCb.Value = 1)
     if !settings.remember
         return
-    path := StrLower(ExePath(hwnd))
-    name := StrLower(ProcessName(hwnd))
-    if (path != "" && remembered.Has(path))
-        remembered.Delete(path)
-    if (name != "" && remembered.Has(name))
-        remembered.Delete(name)
+    key := RememberKey(hwnd)
+    if (key != "" && remembered.Has(key))
+        remembered.Delete(key)
     SaveSettings()
 }
 
