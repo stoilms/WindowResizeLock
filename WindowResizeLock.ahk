@@ -4,7 +4,7 @@ Persistent
 
 ; WindowLock — make other apps' windows unresizable.
 ;
-; Hotkey (default Win+Shift+L): toggle the active window
+; Hotkey (default Win+Shift+L): toggle the active window, unless turned off in the UI
 ; The window opens on launch unless "Start hidden in the tray" is set.
 ; Quit restores every locked window.
 ;
@@ -39,8 +39,8 @@ DEFAULT_HOTKEY := "#+l"
 locked := Map()
 ; "exe|title" => title. Same process, different window titles stay separate.
 remembered := Map()
-settings := { hotkey: DEFAULT_HOTKEY, remember: false, startHidden: false }
-ui := { gui: 0, lv: 0, hotkeyText: 0, rememberCb: 0, startHiddenCb: 0, capturing: false, captureIh: 0 }
+settings := { hotkey: DEFAULT_HOTKEY, hotkeyEnabled: true, remember: false, startHidden: false }
+ui := { gui: 0, lv: 0, hotkeyText: 0, hotkeyCb: 0, rememberCb: 0, startHiddenCb: 0, capturing: false, captureIh: 0 }
 hwndByRow := Map()
 
 LoadSettings()
@@ -48,7 +48,6 @@ ApplyHotkey(settings.hotkey)
 if settings.remember
     ApplyRemembered()
 
-A_IconTip := "Window Lock — " HotkeyLabel(settings.hotkey) " toggles resize"
 A_TrayMenu.Delete()
 A_TrayMenu.Add("Open Window Lock", (*) => ShowUi())
 A_TrayMenu.Add("Toggle active window", (*) => Toggle(WinGetID("A")))
@@ -62,9 +61,12 @@ SetTimer(Enforce, 250)
 if settings.remember
     SetTimer(ApplyRemembered, 2000)
 
-if settings.startHidden
-    TrayTip(HotkeyLabel(settings.hotkey) " toggles the active window.`nOpen Window Lock from the tray for settings.", "Window Lock")
-else
+if settings.startHidden {
+    if settings.hotkeyEnabled
+        TrayTip(HotkeyLabel(settings.hotkey) " toggles the active window.`nOpen Window Lock from the tray for settings.", "Window Lock")
+    else
+        TrayTip("Keyboard shortcut is off.`nOpen Window Lock from the tray for settings.", "Window Lock")
+} else
     ShowUi()
 
 ; --- Settings / persistence -------------------------------------------------
@@ -72,6 +74,7 @@ else
 LoadSettings() {
     global CONFIG_PATH, DEFAULT_HOTKEY, settings, remembered
     settings.hotkey := DEFAULT_HOTKEY
+    settings.hotkeyEnabled := true
     settings.remember := false
     settings.startHidden := false
     remembered := Map()
@@ -95,7 +98,9 @@ LoadSettings() {
         if (line = "" || SubStr(Trim(line), 1, 1) = ";")
             continue
         if (section = "Settings") {
-            if RegExMatch(line, "^Hotkey=(.*)$", &m)
+            if RegExMatch(line, "^HotkeyEnabled=(.*)$", &m)
+                settings.hotkeyEnabled := (Trim(m[1]) = "1")
+            else if RegExMatch(line, "^Hotkey=(.*)$", &m)
                 settings.hotkey := m[1]
             else if RegExMatch(line, "^Remember=(.*)$", &m)
                 settings.remember := (Trim(m[1]) = "1")
@@ -146,6 +151,7 @@ SaveSettings() {
     }
     content := "[Settings]`r`n"
         . "Hotkey=" settings.hotkey "`r`n"
+        . "HotkeyEnabled=" (settings.hotkeyEnabled ? "1" : "0") "`r`n"
         . "Remember=" (settings.remember ? "1" : "0") "`r`n"
         . "StartHidden=" (settings.startHidden ? "1" : "0") "`r`n"
         . "`r`n[Remembered]`r`n"
@@ -252,18 +258,25 @@ ApplyHotkey(newHotkey) {
     try {
         if old != ""
             try Hotkey(old, "Off")
-        Hotkey(newHotkey, (*) => Toggle(WinGetID("A")), "On")
+        if settings.hotkeyEnabled
+            Hotkey(newHotkey, (*) => Toggle(WinGetID("A")), "On")
         settings.hotkey := newHotkey
     } catch as err {
-        if old != "" {
-            try Hotkey(old, (*) => Toggle(WinGetID("A")), "On")
-        } else {
-            Hotkey(DEFAULT_HOTKEY, (*) => Toggle(WinGetID("A")), "On")
-            settings.hotkey := DEFAULT_HOTKEY
-        }
+        settings.hotkey := old != "" ? old : DEFAULT_HOTKEY
+        if settings.hotkeyEnabled
+            Hotkey(settings.hotkey, (*) => Toggle(WinGetID("A")), "On")
+        UpdateIconTip()
         throw err
     }
-    A_IconTip := "Window Lock — " HotkeyLabel(settings.hotkey) " toggles resize"
+    UpdateIconTip()
+}
+
+UpdateIconTip() {
+    global settings
+    if settings.hotkeyEnabled
+        A_IconTip := "Window Lock — " HotkeyLabel(settings.hotkey) " toggles resize"
+    else
+        A_IconTip := "Window Lock — shortcut off"
 }
 
 HotkeyLabel(hk) {
@@ -517,6 +530,12 @@ BuildUi() {
     ui.hotkeyText := g.Add("Edit", "xm y+4 w260 ReadOnly", HotkeyLabel(settings.hotkey))
     g.Add("Button", "x+8 yp w110", "Change…").OnEvent("Click", StartHotkeyCapture)
 
+    hotkeyOpts := "xm y+8 w400"
+    if settings.hotkeyEnabled
+        hotkeyOpts .= " Checked"
+    ui.hotkeyCb := g.Add("Checkbox", hotkeyOpts, "Enable keyboard shortcut")
+    ui.hotkeyCb.OnEvent("Click", OnHotkeyToggle)
+
     rememberOpts := "xm y+14 w400"
     if settings.remember
         rememberOpts .= " Checked"
@@ -541,6 +560,21 @@ BuildUi() {
     g.Add("Button", "x+8 yp w90", "Quit").OnEvent("Click", (*) => ExitApp())
 
     ui.gui := g
+}
+
+OnHotkeyToggle(*) {
+    SetTimer(CommitHotkeyToggle, -1)
+}
+
+CommitHotkeyToggle() {
+    global settings, ui
+    settings.hotkeyEnabled := (ui.hotkeyCb.Value = 1)
+    ApplyHotkey(settings.hotkey)
+    SaveSettings()
+    if settings.hotkeyEnabled
+        Tip("Shortcut on: " HotkeyLabel(settings.hotkey))
+    else
+        Tip("Keyboard shortcut off")
 }
 
 OnRememberToggle(*) {
