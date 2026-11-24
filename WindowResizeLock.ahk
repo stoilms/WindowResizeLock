@@ -5,8 +5,8 @@ Persistent
 ; WindowLock — make other apps' windows unresizable.
 ;
 ; Hotkey (default Win+Shift+L): toggle the active window
-; Tray → Open Window Lock: change hotkey, pick windows, remember locks
-; Quit from the tray and every locked window is restored.
+; The window opens on launch unless "Start hidden in the tray" is set.
+; Quit restores every locked window.
 ;
 ; What it changes
 ;   Removes WS_THICKFRAME (0x40000), the style Windows uses for a sizing
@@ -37,10 +37,10 @@ DEFAULT_HOTKEY := "#+l"
 
 ; hwnd => style the window had before we locked it
 locked := Map()
-; "exePath|title" keys of windows to re-lock on launch / when they reappear
+; lowercased exe path => title last seen (matched by exe, so titles can change)
 remembered := Map()
-settings := { hotkey: DEFAULT_HOTKEY, remember: false }
-ui := { gui: 0, lv: 0, hotkeyText: 0, rememberCb: 0, capturing: false, captureIh: 0 }
+settings := { hotkey: DEFAULT_HOTKEY, remember: false, startHidden: false }
+ui := { gui: 0, lv: 0, hotkeyText: 0, rememberCb: 0, startHiddenCb: 0, capturing: false, captureIh: 0 }
 hwndByRow := Map()
 
 LoadSettings()
@@ -62,59 +62,111 @@ SetTimer(Enforce, 250)
 if settings.remember
     SetTimer(ApplyRemembered, 2000)
 
-TrayTip(HotkeyLabel(settings.hotkey) " toggles the active window.`nOpen Window Lock from the tray for settings.", "Window Lock")
+if settings.startHidden
+    TrayTip(HotkeyLabel(settings.hotkey) " toggles the active window.`nOpen Window Lock from the tray for settings.", "Window Lock")
+else
+    ShowUi()
 
 ; --- Settings / persistence -------------------------------------------------
 
 LoadSettings() {
     global CONFIG_PATH, DEFAULT_HOTKEY, settings, remembered
-    settings.hotkey := IniRead(CONFIG_PATH, "Settings", "Hotkey", DEFAULT_HOTKEY)
-    settings.remember := IniRead(CONFIG_PATH, "Settings", "Remember", "0") = "1"
+    settings.hotkey := DEFAULT_HOTKEY
+    settings.remember := false
+    settings.startHidden := false
     remembered := Map()
-    ; AHK v2 throws when the section/file is missing — do not use v1's "ERROR" sentinel.
+    ; Written as UTF-8. Windows IniRead does not reliably read that, so parse it here.
     try
-        section := IniRead(CONFIG_PATH, "Remembered")
+        text := FileRead(CONFIG_PATH, "UTF-8")
     catch
         return
-    if (section = "")
-        return
-    for line in StrSplit(section, "`n") {
-        if (line = "")
+    if (SubStr(text, 1, 1) = Chr(0xFEFF))
+        text := SubStr(text, 2)
+
+    section := ""
+    exes := Map()
+    titles := Map()
+    legacy := false
+    for line in StrSplit(text, "`n", "`r") {
+        if RegExMatch(line, "^\[(.+)\]$", &sec) {
+            section := sec[1]
             continue
-        parts := StrSplit(line, "=", , 2)
-        if parts.Length
-            remembered[DecodeKey(parts[1])] := true
+        }
+        if (line = "" || SubStr(Trim(line), 1, 1) = ";")
+            continue
+        if (section = "Settings") {
+            if RegExMatch(line, "^Hotkey=(.*)$", &m)
+                settings.hotkey := m[1]
+            else if RegExMatch(line, "^Remember=(.*)$", &m)
+                settings.remember := (Trim(m[1]) = "1")
+            else if RegExMatch(line, "^StartHidden=(.*)$", &m)
+                settings.startHidden := (Trim(m[1]) = "1")
+            continue
+        }
+        if (section != "Remembered")
+            continue
+        if RegExMatch(line, "^Exe(\d+)=(.*)$", &m)
+            exes[Integer(m[1])] := m[2]
+        else if RegExMatch(line, "^Title(\d+)=(.*)$", &m)
+            titles[Integer(m[1])] := m[2]
+        else if RegExMatch(line, "^([^=]+)=", &m) && (m[1] != "Count") {
+            legacy := true
+            decoded := DecodeKey(m[1])
+            parts := StrSplit(decoded, "|", , 2)
+            exe := Trim(parts[1])
+            title := parts.Length > 1 ? parts[2] : ""
+            if (exe != "")
+                remembered[StrLower(exe)] := title
+        }
     }
+    for index, exe in exes {
+        if (exe = "")
+            continue
+        title := titles.Has(index) ? titles[index] : ""
+        remembered[StrLower(exe)] := title
+    }
+    if legacy
+        SaveSettings()
 }
 
 SaveSettings() {
     global CONFIG_PATH, settings, remembered
-    content := "[Settings]`r`nHotkey=" settings.hotkey "`r`nRemember=" (settings.remember ? "1" : "0") "`r`n`r`n[Remembered]`r`n"
+    content := "[Settings]`r`n"
+        . "Hotkey=" settings.hotkey "`r`n"
+        . "Remember=" (settings.remember ? "1" : "0") "`r`n"
+        . "StartHidden=" (settings.startHidden ? "1" : "0") "`r`n"
+        . "`r`n[Remembered]`r`n"
     if settings.remember {
-        for key, _ in remembered
-            content .= EncodeKey(key) "=1`r`n"
+        i := 0
+        for exe, title in remembered {
+            i++
+            content .= "Exe" i "=" exe "`r`n"
+            content .= "Title" i "=" StrReplace(StrReplace(title, "`r", " "), "`n", " ") "`r`n"
+        }
     }
     f := FileOpen(CONFIG_PATH, "w", "UTF-8")
     f.Write(content)
     f.Close()
 }
 
-EncodeKey(key) => StrReplace(StrReplace(key, "\", "\\"), "=", "\e")
+; Old files stored an encoded "exe|title" ini key. Backslash is literal in AHK strings.
 DecodeKey(key) => StrReplace(StrReplace(key, "\e", "="), "\\", "\")
 
-WindowKey(hwnd) {
+ExePath(hwnd) {
     try
-        exe := WinGetProcessPath("ahk_id " hwnd)
+        return WinGetProcessPath("ahk_id " hwnd)
     catch
-        exe := ""
-    return exe "|" TitleOf(hwnd)
+        return ""
 }
 
 RememberAdd(hwnd) {
     global remembered, settings
     if !settings.remember
         return
-    remembered[WindowKey(hwnd)] := true
+    exe := ExePath(hwnd)
+    if (exe = "")
+        return
+    remembered[StrLower(exe)] := TitleOf(hwnd)
     SaveSettings()
 }
 
@@ -122,9 +174,9 @@ RememberRemove(hwnd) {
     global remembered, settings
     if !settings.remember
         return
-    key := WindowKey(hwnd)
-    if remembered.Has(key)
-        remembered.Delete(key)
+    exe := ExePath(hwnd)
+    if (exe != "" && remembered.Has(StrLower(exe)))
+        remembered.Delete(StrLower(exe))
     SaveSettings()
 }
 
@@ -132,12 +184,19 @@ ApplyRemembered(*) {
     global remembered, locked, settings
     if !settings.remember || !remembered.Count
         return
+    changed := false
     for hwnd in WinGetList() {
-        if !IsLockable(hwnd) || locked.Has(Integer(hwnd))
+        hwnd := Integer(hwnd)
+        if !IsLockable(hwnd) || locked.Has(hwnd)
             continue
-        if remembered.Has(WindowKey(hwnd))
+        exe := ExePath(hwnd)
+        if (exe != "" && remembered.Has(StrLower(exe))) {
             LockWindow(hwnd, false)
+            changed := true
+        }
     }
+    if changed
+        RefreshUiList()
 }
 
 ; --- Hotkey -----------------------------------------------------------------
@@ -237,8 +296,6 @@ IsLockable(hwnd) {
         return false
     try {
         if WinGetTitle("ahk_id " hwnd) = ""
-            return false
-        if WinGetMinMax("ahk_id " hwnd) = -1
             return false
         style := GetStyle(hwnd)
         if !(style & 0x10000000)  ; WS_VISIBLE
@@ -406,7 +463,7 @@ ShowUi(*) {
 
 BuildUi() {
     global ui, settings
-    g := Gui("+Resize MinSize420x360", "Window Lock")
+    g := Gui("+Resize MinSize420x400", "Window Lock")
     g.OnEvent("Close", (*) => g.Hide())
     g.OnEvent("Escape", (*) => g.Hide())
     g.SetFont("s10", "Segoe UI")
@@ -415,9 +472,17 @@ BuildUi() {
     ui.hotkeyText := g.Add("Edit", "xm y+4 w260 ReadOnly", HotkeyLabel(settings.hotkey))
     g.Add("Button", "x+8 yp w110", "Change…").OnEvent("Click", StartHotkeyCapture)
 
-    ui.rememberCb := g.Add("Checkbox", "xm y+14 w400 Checked" (settings.remember ? "1" : "0"),
-        "Remember locked windows and re-lock them on next launch")
+    rememberOpts := "xm y+14 w400"
+    if settings.remember
+        rememberOpts .= " Checked"
+    ui.rememberCb := g.Add("Checkbox", rememberOpts, "Remember locked windows and re-lock them on next launch")
     ui.rememberCb.OnEvent("Click", OnRememberToggle)
+
+    hiddenOpts := "xm y+6 w400"
+    if settings.startHidden
+        hiddenOpts .= " Checked"
+    ui.startHiddenCb := g.Add("Checkbox", hiddenOpts, "Start hidden in the tray")
+    ui.startHiddenCb.OnEvent("Click", OnStartHiddenToggle)
 
     g.Add("Text", "xm y+14", "Open windows (checked = locked)")
     g.Add("Button", "x+8 yp w90", "Refresh").OnEvent("Click", (*) => RefreshUiList())
@@ -428,6 +493,7 @@ BuildUi() {
     ui.lv.ModifyCol(2, 120)
 
     g.Add("Button", "xm y+10 w90", "Close").OnEvent("Click", (*) => g.Hide())
+    g.Add("Button", "x+8 yp w90", "Quit").OnEvent("Click", (*) => ExitApp())
     g.OnEvent("Size", OnUiSize)
 
     ui.gui := g
@@ -437,7 +503,7 @@ OnUiSize(g, minMax, width, height) {
     global ui
     if (minMax = -1) || !ui.lv
         return
-    ui.lv.Move(, , Max(200, width - 30), Max(100, height - 160))
+    ui.lv.Move(, , Max(200, width - 30), Max(100, height - 210))
 }
 
 OnRememberToggle(cb, *) {
@@ -445,8 +511,11 @@ OnRememberToggle(cb, *) {
     settings.remember := !!cb.Value
     if settings.remember {
         for hwnd, _ in locked {
-            if WinExist("ahk_id " hwnd)
-                remembered[WindowKey(hwnd)] := true
+            if WinExist("ahk_id " hwnd) {
+                exe := ExePath(hwnd)
+                if (exe != "")
+                    remembered[StrLower(exe)] := TitleOf(hwnd)
+            }
         }
         SaveSettings()
         SetTimer(ApplyRemembered, 2000)
@@ -456,6 +525,12 @@ OnRememberToggle(cb, *) {
         remembered := Map()
         SaveSettings()
     }
+}
+
+OnStartHiddenToggle(cb, *) {
+    global settings
+    settings.startHidden := !!cb.Value
+    SaveSettings()
 }
 
 OnWindowCheck(lv, row, checked) {
