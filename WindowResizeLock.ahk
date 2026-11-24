@@ -71,8 +71,12 @@ LoadSettings() {
     settings.hotkey := IniRead(CONFIG_PATH, "Settings", "Hotkey", DEFAULT_HOTKEY)
     settings.remember := IniRead(CONFIG_PATH, "Settings", "Remember", "0") = "1"
     remembered := Map()
-    section := IniRead(CONFIG_PATH, "Remembered")
-    if (section = "ERROR" || section = "")
+    ; AHK v2 throws when the section/file is missing — do not use v1's "ERROR" sentinel.
+    try
+        section := IniRead(CONFIG_PATH, "Remembered")
+    catch
+        return
+    if (section = "")
         return
     for line in StrSplit(section, "`n") {
         if (line = "")
