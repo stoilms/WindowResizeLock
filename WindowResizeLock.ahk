@@ -125,12 +125,23 @@ LoadSettings() {
         title := titles.Has(index) ? titles[index] : ""
         remembered[StrLower(exe)] := title
     }
-    if legacy
-        SaveSettings()
 }
 
 SaveSettings() {
-    global CONFIG_PATH, settings, remembered
+    global CONFIG_PATH, settings, remembered, locked, ui
+    ; The checkbox is the source of truth once the window exists. Fold every
+    ; window that is locked right now into the saved list before writing.
+    if ui.rememberCb
+        settings.remember := (ui.rememberCb.Value = 1)
+    if settings.remember {
+        for hwnd, orig in locked {
+            if !WinExist("ahk_id " hwnd)
+                continue
+            key := RememberKey(hwnd)
+            if (key != "")
+                remembered[key] := TitleOf(hwnd)
+        }
+    }
     content := "[Settings]`r`n"
         . "Hotkey=" settings.hotkey "`r`n"
         . "Remember=" (settings.remember ? "1" : "0") "`r`n"
@@ -159,24 +170,53 @@ ExePath(hwnd) {
         return ""
 }
 
+ProcessName(hwnd) {
+    try
+        return WinGetProcessName("ahk_id " hwnd)
+    catch
+        return ""
+}
+
+; Prefer the full path. Fall back to the process name, which is what the list shows.
+RememberKey(hwnd) {
+    path := ExePath(hwnd)
+    if (path != "")
+        return StrLower(path)
+    return StrLower(ProcessName(hwnd))
+}
+
+IsRemembered(hwnd) {
+    global remembered
+    path := StrLower(ExePath(hwnd))
+    name := StrLower(ProcessName(hwnd))
+    return (path != "" && remembered.Has(path)) || (name != "" && remembered.Has(name))
+}
+
 RememberAdd(hwnd) {
-    global remembered, settings
+    global remembered, settings, ui
+    if ui.rememberCb
+        settings.remember := (ui.rememberCb.Value = 1)
     if !settings.remember
         return
-    exe := ExePath(hwnd)
-    if (exe = "")
+    key := RememberKey(hwnd)
+    if (key = "")
         return
-    remembered[StrLower(exe)] := TitleOf(hwnd)
+    remembered[key] := TitleOf(hwnd)
     SaveSettings()
 }
 
 RememberRemove(hwnd) {
-    global remembered, settings
+    global remembered, settings, ui
+    if ui.rememberCb
+        settings.remember := (ui.rememberCb.Value = 1)
     if !settings.remember
         return
-    exe := ExePath(hwnd)
-    if (exe != "" && remembered.Has(StrLower(exe)))
-        remembered.Delete(StrLower(exe))
+    path := StrLower(ExePath(hwnd))
+    name := StrLower(ProcessName(hwnd))
+    if (path != "" && remembered.Has(path))
+        remembered.Delete(path)
+    if (name != "" && remembered.Has(name))
+        remembered.Delete(name)
     SaveSettings()
 }
 
@@ -189,8 +229,7 @@ ApplyRemembered(*) {
         hwnd := Integer(hwnd)
         if !IsLockable(hwnd) || locked.Has(hwnd)
             continue
-        exe := ExePath(hwnd)
-        if (exe != "" && remembered.Has(StrLower(exe))) {
+        if IsRemembered(hwnd) {
             LockWindow(hwnd, false)
             changed := true
         }
@@ -506,17 +545,15 @@ OnUiSize(g, minMax, width, height) {
     ui.lv.Move(, , Max(200, width - 30), Max(100, height - 210))
 }
 
-OnRememberToggle(cb, *) {
-    global settings, remembered, locked
-    settings.remember := !!cb.Value
+OnRememberToggle(*) {
+    ; Read the box on the next tick so its value is the state after the click.
+    SetTimer(CommitRememberToggle, -1)
+}
+
+CommitRememberToggle() {
+    global settings, remembered, ui
+    settings.remember := (ui.rememberCb.Value = 1)
     if settings.remember {
-        for hwnd, _ in locked {
-            if WinExist("ahk_id " hwnd) {
-                exe := ExePath(hwnd)
-                if (exe != "")
-                    remembered[StrLower(exe)] := TitleOf(hwnd)
-            }
-        }
         SaveSettings()
         SetTimer(ApplyRemembered, 2000)
         ApplyRemembered()
