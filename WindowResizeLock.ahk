@@ -508,7 +508,7 @@ ShowUi(*) {
 
 BuildUi() {
     global ui, settings
-    g := Gui("+Resize MinSize420x400", "Window Lock")
+    g := Gui("-Resize", "Window Lock")
     g.OnEvent("Close", (*) => g.Hide())
     g.OnEvent("Escape", (*) => g.Hide())
     g.SetFont("s10", "Segoe UI")
@@ -539,16 +539,8 @@ BuildUi() {
 
     g.Add("Button", "xm y+10 w90", "Close").OnEvent("Click", (*) => g.Hide())
     g.Add("Button", "x+8 yp w90", "Quit").OnEvent("Click", (*) => ExitApp())
-    g.OnEvent("Size", OnUiSize)
 
     ui.gui := g
-}
-
-OnUiSize(g, minMax, width, height) {
-    global ui
-    if (minMax = -1) || !ui.lv
-        return
-    ui.lv.Move(, , Max(200, width - 30), Max(100, height - 210))
 }
 
 OnRememberToggle(*) {
