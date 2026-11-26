@@ -28,6 +28,7 @@ SWP_NOZORDER    := 0x0004
 SWP_NOACTIVATE  := 0x0010
 SWP_FRAMECHANGED := 0x0020
 FRAME_FLAGS := SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+POSITION_FLAGS := SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
 
 GetLong := A_PtrSize = 8 ? "GetWindowLongPtr" : "GetWindowLong"
 SetLong := A_PtrSize = 8 ? "SetWindowLongPtr" : "SetWindowLong"
@@ -37,10 +38,12 @@ DEFAULT_HOTKEY := "#+l"
 
 ; hwnd => style the window had before we locked it
 locked := Map()
+; hwnd => position to keep while the window is frozen
+frozen := Map()
 ; "exe|title" => title. Same process, different window titles stay separate.
 remembered := Map()
 settings := { hotkey: DEFAULT_HOTKEY, hotkeyEnabled: true, remember: false, startHidden: false }
-ui := { gui: 0, lv: 0, hotkeyText: 0, hotkeyCb: 0, rememberCb: 0, startHiddenCb: 0, capturing: false, captureIh: 0 }
+ui := { gui: 0, lv: 0, freezeBtn: 0, hotkeyText: 0, hotkeyCb: 0, rememberCb: 0, startHiddenCb: 0, capturing: false, captureIh: 0 }
 hwndByRow := Map()
 
 LoadSettings()
@@ -414,7 +417,7 @@ SetLockedState(hwnd, shouldLock) {
 }
 
 Enforce() {
-    global locked
+    global locked, frozen
     dead := []
     for hwnd, orig in locked {
         if !WinExist("ahk_id " hwnd)
@@ -422,9 +425,18 @@ Enforce() {
         else
             EnsureLocked(hwnd)
     }
+    for hwnd, pos in frozen {
+        if !WinExist("ahk_id " hwnd)
+            dead.Push(hwnd)
+        else
+            EnsurePosition(hwnd, pos)
+    }
     changed := false
     for , hwnd in dead {
-        locked.Delete(hwnd)
+        if locked.Has(hwnd)
+            locked.Delete(hwnd)
+        if frozen.Has(hwnd)
+            frozen.Delete(hwnd)
         changed := true
     }
     ; Do not drop remembered entries when a window closes — they re-apply later.
@@ -438,12 +450,17 @@ OnScriptExit(*) {
 }
 
 RestoreAll(*) {
-    global locked
+    global locked, frozen
     for hwnd, orig in locked.Clone() {
         if WinExist("ahk_id " hwnd)
             Restore(hwnd, orig)
     }
     locked.Clear()
+    for hwnd, pos in frozen.Clone() {
+        if WinExist("ahk_id " hwnd)
+            EnsurePosition(hwnd, pos)
+    }
+    frozen.Clear()
 }
 
 EnsureLocked(hwnd) {
@@ -480,6 +497,25 @@ SetStyle(hwnd, style) {
 FrameChanged(hwnd) {
     global FRAME_FLAGS
     DllCall("SetWindowPos", "Ptr", hwnd, "Ptr", 0, "Int", 0, "Int", 0, "Int", 0, "Int", 0, "UInt", FRAME_FLAGS)
+}
+
+GetWindowRect(hwnd) {
+    rect := Buffer(16, 0)
+    if !DllCall("GetWindowRect", "Ptr", hwnd, "Ptr", rect, "Int")
+        return false
+    return {
+        x: NumGet(rect, 0, "Int"),
+        y: NumGet(rect, 4, "Int")
+    }
+}
+
+EnsurePosition(hwnd, pos) {
+    global POSITION_FLAGS
+    rect := GetWindowRect(hwnd)
+    if !rect || (rect.x = pos.x && rect.y = pos.y)
+        return
+    DllCall("SetWindowPos", "Ptr", hwnd, "Ptr", 0, "Int", pos.x, "Int", pos.y,
+        "Int", 0, "Int", 0, "UInt", POSITION_FLAGS)
 }
 
 IsShell(hwnd) {
@@ -548,13 +584,17 @@ BuildUi() {
     ui.startHiddenCb := g.Add("Checkbox", hiddenOpts, "Start hidden in the tray")
     ui.startHiddenCb.OnEvent("Click", OnStartHiddenToggle)
 
-    g.Add("Text", "xm y+14", "Open windows (checked = locked)")
+    g.Add("Text", "xm y+14", "Open windows (checked = resize locked)")
     g.Add("Button", "x+8 yp w90", "Refresh").OnEvent("Click", (*) => RefreshUiList())
+    ui.freezeBtn := g.Add("Button", "x+8 yp w125", "Freeze position")
+    ui.freezeBtn.OnEvent("Click", ToggleSelectedFreeze)
 
-    ui.lv := g.Add("ListView", "xm y+6 w400 r14 Checked -Multi", ["Window", "App"])
+    ui.lv := g.Add("ListView", "xm y+6 w500 r14 Checked -Multi", ["Window", "App", "Position"])
     ui.lv.OnEvent("ItemCheck", OnWindowCheck)
+    ui.lv.OnEvent("ItemFocus", OnWindowSelect)
     ui.lv.ModifyCol(1, 260)
-    ui.lv.ModifyCol(2, 120)
+    ui.lv.ModifyCol(2, 130)
+    ui.lv.ModifyCol(3, 100)
 
     g.Add("Button", "xm y+10 w90", "Close").OnEvent("Click", (*) => g.Hide())
     g.Add("Button", "x+8 yp w90", "Quit").OnEvent("Click", (*) => ExitApp())
@@ -616,8 +656,53 @@ OnWindowCheck(lv, row, checked) {
     SetLockedState(hwnd, checked)
 }
 
+ToggleSelectedFreeze(*) {
+    global ui, hwndByRow
+    row := ui.lv.GetNext(0)
+    if !row || !hwndByRow.Has(row)
+        return
+    ToggleFreeze(hwndByRow[row])
+    RefreshUiList()
+}
+
+ToggleFreeze(hwnd) {
+    global frozen
+    hwnd := Integer(hwnd)
+    if !IsLockable(hwnd)
+        return
+    if frozen.Has(hwnd) {
+        frozen.Delete(hwnd)
+        Tip("Position can move: " TitleOf(hwnd))
+        return
+    }
+    if WinGetMinMax("ahk_id " hwnd) != 0 {
+        Tip("Restore the window before freezing its position")
+        return
+    }
+    rect := GetWindowRect(hwnd)
+    if !rect {
+        Tip("Could not read the window position")
+        return
+    }
+    frozen[hwnd] := { x: rect.x, y: rect.y }
+    Tip("Position frozen: " TitleOf(hwnd))
+}
+
+OnWindowSelect(*) {
+    UpdateFreezeButton()
+}
+
+UpdateFreezeButton() {
+    global ui, hwndByRow, frozen
+    if !ui.lv || !ui.freezeBtn
+        return
+    row := ui.lv.GetNext(0)
+    ui.freezeBtn.Text := (row && hwndByRow.Has(row) && frozen.Has(hwndByRow[row]))
+        ? "Unfreeze position" : "Freeze position"
+}
+
 RefreshUiList() {
-    global ui, locked, hwndByRow
+    global ui, locked, frozen, hwndByRow
     if !ui.gui || !ui.lv
         return
     lv := ui.lv
@@ -636,8 +721,9 @@ RefreshUiList() {
             exe := WinGetProcessName("ahk_id " hwnd)
         catch
             exe := ""
-        row := lv.Add(locked.Has(hwnd) ? "Check" : "", title, exe)
+        row := lv.Add(locked.Has(hwnd) ? "Check" : "", title, exe, frozen.Has(hwnd) ? "Frozen" : "")
         hwndByRow[row] := hwnd
     }
     lv.OnEvent("ItemCheck", OnWindowCheck)
+    UpdateFreezeButton()
 }
