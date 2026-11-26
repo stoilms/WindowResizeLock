@@ -1,6 +1,6 @@
 # Window Resize Lock
 
-Stops selected windows from being resized. Edge-dragging and the maximize button no longer change the size. The border usually stays.
+Stops selected windows from being resized and can keep their positions fixed through desktop work-area changes. Edge-dragging and the maximize button no longer change the size. The border usually stays.
 
 Requires [AutoHotkey v2](https://www.autohotkey.com/). Run `WindowResizeLock.ahk`.
 
@@ -9,7 +9,7 @@ Requires [AutoHotkey v2](https://www.autohotkey.com/). Run `WindowResizeLock.ahk
 ## Features
 
 - **Lock or unlock windows.** Check a window in the list, or press the shortcut (Win+Shift+L by default) to toggle the active window. A check applies to that window’s program and title, so other windows from the same program stay as they are.
-- **Freeze a window's position.** Select a row and click **Freeze position**. If Windows moves the window after a desktop work-area change, its original position is restored. Restore a minimized or maximized window before freezing it. Position freezes last only until the script exits.
+- **Freeze a window's position.** Select a row and click **Freeze position**; the Position column shows which windows are frozen, and the button changes to **Unfreeze position** for a frozen row. The script keeps the window at its captured coordinates, moving it back if Windows or the user moves it. Restore a minimized or maximized window before freezing it. Position freezes last only until the script exits.
 - **Change the shortcut.** Click **Change…** and press the keys you want.
 - **Turn the shortcut off.** Uncheck **Enable keyboard shortcut**. The chosen shortcut is kept for when you turn it back on.
 - **Remember locks.** Check **Remember locked windows** and the same windows are locked again the next time they are open.
